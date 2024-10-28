@@ -1,10 +1,3 @@
-'''
-Reference:
-Phan, H., Le, C., Le, V., He, Y., & Nguyen, A. (2024). 
-Fast and Interpretable Face Identification for Out-Of-Distribution Data Using Vision Transformers. 
-https://doi.org/10.1109/WACV57701.2024.00618  
-'''
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -13,47 +6,8 @@ import math
 from einops import rearrange, repeat
 from resnet18 import resnet_face18
 
-# Minimum number of patches required 
+# Minimum number of patches required
 MIN_NUM_PATCHES = 16
-
-class ArcFace(nn.Module):
-    '''
-    Description: ArcFace loss function (angular margin)
-    '''
-    def __init__(self, in_features, out_features, device_id=None, s=64.0, m=0.50):
-        super(ArcFace, self).__init__()
-        self.in_features = in_features
-        self.out_features = out_features
-        self.device_id = device_id
-        self.s = s
-        self.m = m
-
-        self.weight = Parameter(torch.FloatTensor(out_features, in_features))
-        nn.init.xavier_uniform_(self.weight)
-
-        self.cos_m = math.cos(m)
-        self.sin_m = math.sin(m)
-        self.th = math.cos(math.pi - m)
-        self.mm = math.sin(math.pi - m) * m
-
-    def forward(self, input, label):
-        # Compute cosine similarity
-        cosine = F.linear(F.normalize(input), F.normalize(self.weight))
-
-        # Compute sine and phi(theta)
-        sine = torch.sqrt(1.0 - torch.pow(cosine, 2))
-        phi = cosine * self.cos_m - sine * self.sin_m
-
-        phi = torch.where(cosine > self.th, phi, cosine - self.mm)
-
-        # Create one-hot encoding of the labels
-        one_hot = torch.zeros_like(cosine).scatter_(1, label.view(-1, 1).long(), 1)
-
-        # Apply ArcFace margin to output
-        output = (one_hot * phi) + ((1.0 - one_hot) * cosine)
-        output *= self.s
-
-        return output
 
 class Residual(nn.Module):
     '''
@@ -151,7 +105,7 @@ class Transformer(nn.Module):
 
 class HybridViT(nn.Module):
     '''
-    Description: Hybrid Vision Transformer model
+    Description: Hybrid Vision Transformer model for classification
     '''
     def __init__(self, GPU_ID, num_class, image_size, patch_size, dim, depth, heads, mlp_dim, channels=1, out_dim=512, remove_pos=False):
         super(HybridViT, self).__init__()
@@ -169,7 +123,7 @@ class HybridViT(nn.Module):
 
         self.transformer = Transformer(dim, depth, heads, dim // heads, mlp_dim, dropout=0.1)
         self.mlp_head = nn.LayerNorm(out_dim)
-        self.loss = ArcFace(in_features=out_dim, out_features=num_class, device_id=GPU_ID)
+        self.classifier = nn.Linear(out_dim, num_class)  # Linear classifier for classification
 
     def load_face_model(self):
         '''
@@ -205,5 +159,29 @@ class HybridViT(nn.Module):
         # Apply MLP head
         emb = self.mlp_head(x.mean(dim=1))
 
-        # Apply loss function if label is provided
-        return self.loss(emb, label) if label is not None else emb
+        # Apply classifier and return logits
+        logits = self.classifier(emb)
+        return logits
+
+# Example training step
+def train_step(images, labels, model, criterion, optimizer):
+    model.train()
+    
+    # Forward pass
+    logits = model(images)
+    loss = criterion(logits, labels)
+
+    # Backward pass and optimization
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+
+    return loss.item()
+
+# Example inference step
+def inference(images, model):
+    model.eval()
+    with torch.no_grad():
+        logits = model(images)
+        probabilities = F.softmax(logits, dim=-1)
+    return probabilities
