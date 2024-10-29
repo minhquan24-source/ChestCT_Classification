@@ -1,5 +1,5 @@
 import os
-from hybrid_vit import HybridViT
+from hybrid_vit import HybridViT, train_step
 import torch
 import torch.optim as optim
 from torch.utils.data import DataLoader
@@ -10,6 +10,7 @@ from torch.utils.data import Dataset
 import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.metrics import confusion_matrix
+import torch.nn.functional as F
 
 class CancerDataset(Dataset):
     def __init__(self, data, transform=None):
@@ -68,25 +69,14 @@ def train(train_loader, epochs, learning_rate, depth):
     for epoch in range(epochs):
         # Start counting time for each epoch
         epoch_start_time = time.time()
-        
-        model.train()
         running_loss = 0.0
 
         for i, (inputs, labels) in enumerate(train_loader):
             inputs, labels = inputs.to(device), labels.to(device)
 
-            optimizer.zero_grad()
+            loss_item = train_step(inputs, labels, model, criterion, optimizer)
 
-            # Forward pass
-            outputs = model(inputs, labels)
-
-            # Compute the loss
-            loss = criterion(outputs, labels)
-            loss.backward()
-
-            optimizer.step()
-
-            running_loss += loss.item()
+            running_loss += loss_item
 
             if (i + 1) % 10 == 0:  # Print every 10 batches
                 print(f'Epoch [{epoch+1}/{epochs}], Step [{i+1}/{len(train_loader)}], Loss: {running_loss/10:.4f}', end='\r')
@@ -129,7 +119,7 @@ if __name__ == '__main__':
     train_loader = DataLoader(train_data, batch_size=32, shuffle=True, num_workers=4)
 
     # Train the model
-    model = train(train_loader, epochs=1, learning_rate=0.001, depth=4)
+    model = train(train_loader, epochs=10, learning_rate=0.001, depth=4)
 
     # Validate the model
     val_data = CancerDataset(val_files, transform=transform)
@@ -145,17 +135,23 @@ if __name__ == '__main__':
     with torch.no_grad():
         for images, labels in val_loader:
             images, labels = images.to(device), labels.to(device)
-            outputs = model(images)
-            print(outputs)
-            print(torch.max(outputs.data, 1))
-            exit()
-            _, predicted = torch.max(outputs.data, 1)
+            
+            logits = model(images)  # Forward pass
+            probabilities = F.softmax(logits, dim=-1)  # Apply softmax to get probabilities
+            # Get the predicted class
+            predicted_class = torch.argmax(probabilities, dim=1)
             
             # Store predictions and true labels
-            all_preds.extend(predicted.cpu().numpy())
+            all_preds.extend(predicted_class.cpu().numpy())
             all_labels.extend(labels.cpu().numpy())
 
     # Now all_preds and all_labels have the predictions and true labels, respectively.
+    # Calculate the accuracy
+    correct_predictions = sum(p == t for p, t in zip(all_preds, all_labels))
+    total_predictions = len(all_labels)
+    accuracy = correct_predictions / total_predictions
+
+    print(f'Validation Accuracy: {accuracy * 100:.2f}%')
 
     # Compute confusion matrix
     cm = confusion_matrix(all_labels, all_preds)
@@ -167,3 +163,6 @@ if __name__ == '__main__':
     plt.ylabel('True Labels')
     plt.title('Confusion Matrix')
     plt.show()
+
+    # Save the graph
+    plt.savefig('confusion_matrix.png')
