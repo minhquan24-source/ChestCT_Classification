@@ -162,7 +162,6 @@ if __name__ == '__main__':
     plt.xlabel('Predicted Labels')
     plt.ylabel('True Labels')
     plt.title('Confusion Matrix')
-    plt.show()
-
     # Save the graph
     plt.savefig('confusion_matrix.png')
+    plt.show()
